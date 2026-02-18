@@ -15,6 +15,9 @@ import adminSessions from "./routes/adminSessions";
 // ✅ NEW: favorites router
 import favoritesRoutes from "./routes/favorites";
 
+// ✅ NEW: crashes router
+import crashesRouter from "./routes/crashes";
+
 import { errorHandler } from "./middlewares/errorHandler";
 import { apiKeyAuth } from "./middlewares/auth";
 import logger from "./logger/logger";
@@ -54,6 +57,9 @@ app.use("/api/admin", adminSessions);
 
 // Mount favorites router at /api/favorites
 app.use("/api/favorites", favoritesRoutes);
+
+// Mount crashes router (routes defined inside the router will determine final path)
+app.use("/api", crashesRouter);
 
 // ---------------- STATUS SNAPSHOT ----------------
 // Required by DeviceActivity: GET /api/status
