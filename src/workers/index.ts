@@ -2,7 +2,7 @@
 import logger from "../logger/logger";
 import * as cleanupWorker from "./cleanupWorker";
 import * as heartbeatWorker from "./heartbeatWorker";
-import * as restartCoreWorker from "./restartCoreWorker";
+// import * as restartCoreWorker from "./restartCoreWorker";
 
 let started = false;
 
@@ -18,7 +18,7 @@ export async function startWorkers() {
     cleanupWorker.start();
     heartbeatWorker.start();
     // start restartCore worker
-    restartCoreWorker.start();
+    // restartCoreWorker.start();
   } catch (e) {
     logger.error("workers: failed to start some workers", e);
   }
@@ -37,7 +37,7 @@ export async function stopWorkers() {
     await Promise.all([
       cleanupWorker.stop(),
       heartbeatWorker.stop(),
-      restartCoreWorker.stop(),
+      // restartCoreWorker.stop(),
     ]);
   } catch (e) {
     logger.warn("workers: stopWorkers error", e);
