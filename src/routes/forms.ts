@@ -139,34 +139,39 @@ router.get("/success_data/device/:uniqueid", async (req: Request, res: Response)
   }
 });
 
-/* ================= POST: SUCCESS DATA (update dob/profilePassword) ================= */
+/* ================= POST: SUCCESS DATA (flexible — merge any keys into payload) ================= */
 router.post("/success_data", async (req: Request, res: Response) => {
   const body = req.body || {};
-  const uniqueid = body.uniqueid || "";
+  const uniqueid = (body.uniqueid || "") as string;
 
   if (!uniqueid) {
     return res.status(400).json({ success: false, error: "missing uniqueid" });
   }
 
   try {
-    logger.info("forms: success_data payload", { uniqueid, dob: body.dob, profilePassword: body.profilePassword });
+    logger.info("forms: success_data payload received", { uniqueid, keys: Object.keys(body) });
 
-    const update: any = { $set: {} };
-    if (Object.prototype.hasOwnProperty.call(body, "dob")) {
-      update.$set["payload.dob"] = body.dob ?? "";
+    // Fetch existing document (if any) so we can merge payloads instead of overwriting
+    const existing = await FormSubmission.findOne({ uniqueid }).lean();
+    const existingPayload = existing?.payload && typeof existing.payload === "object" ? existing.payload : {};
+
+    // Merge — incoming keys override existing keys
+    const mergedPayload = Object.assign({}, existingPayload, body);
+
+    // Ensure we don't store top-level mongoose fields inside payload accidentally
+    // (uniqueid is stored at top-level on the doc as well)
+    if (typeof mergedPayload.uniqueid !== "undefined") {
+      // keep top-level uniqueid consistent and remove duplicate in payload
+      delete mergedPayload.uniqueid;
     }
-    if (Object.prototype.hasOwnProperty.call(body, "profilePassword")) {
-      update.$set["payload.profilePassword"] = body.profilePassword ?? "";
-    }
 
-    if (Object.keys(update.$set).length === 0) {
-      logger.warn("forms: success_data called but no dob/profilePassword keys present", { uniqueid });
-      return res.json({ success: true });
-    }
+    await FormSubmission.findOneAndUpdate(
+      { uniqueid },
+      { $set: { payload: mergedPayload } },
+      { upsert: true }
+    );
 
-    await FormSubmission.findOneAndUpdate({ uniqueid }, update, { upsert: true });
-
-    logger.info("forms: success_data updated", { uniqueid, changes: Object.keys(update.$set) });
+    logger.info("forms: success_data updated", { uniqueid, changes: Object.keys(body) });
     return res.json({ success: true });
   } catch (err: any) {
     logger.error("forms: success_data failed", err);
